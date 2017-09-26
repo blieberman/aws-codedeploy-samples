@@ -82,6 +82,16 @@ elif [ "${ELB_LIST}" = "_any_" ]; then
         finish_msg
         exit 0
     fi
+elif [ "${ELB_LIST}" = "_dynamic_" ]; then
+    msg "Automatically finding all the ELBs that this instance should be registered to based on tags..."
+    get_elb_list_from_tags $INSTANCE_ID
+    if [ $? != 0 ]; then
+        msg "Couldn't find any, but ELB_LIST=dynamic so finishing successfully without registering."
+        set_flag "ELBs" ""
+        finish_msg
+        exit 0
+    fi
+    set_flag "ELBs" "$ELB_LIST"
 fi
 
 # Loop through all LBs the user set, and attempt to register this instance to them.
@@ -111,5 +121,4 @@ for elb in $ELB_LIST; do
 done
 
 remove_flagfile
-
 finish_msg
