@@ -624,6 +624,7 @@ get_elb_list_from_tags() {
             return 0
         fi
     done
+    return 1
 }
 
 # Usage: get_elb_list <EC2 instance ID>
