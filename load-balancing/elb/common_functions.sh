@@ -16,9 +16,10 @@
 # ELB_LIST defines which Elastic Load Balancers this instance should be part of.
 # The elements in ELB_LIST should be separated by space. Safe default is "".
 # Set to "_all_" to automatically find all load balancers the instance is registered to.
+# Set to "_dynamic_" to dynamically find all load blanacers the instance should be registered to.
 # Set to "_any_" will work as "_all_" but will not fail if instance is not attached to
 # any ASG or ELB, giving flexibility.
-ELB_LIST=""
+ELB_LIST="_dynamic_"
 
 # Under normal circumstances, you shouldn't need to change anything below this line.
 # -----------------------------------------------------------------------------
@@ -45,6 +46,9 @@ FLAGFILE="/tmp/asg_codedeploy_flags-$DEPLOYMENT_GROUP_ID-$DEPLOYMENT_ID"
 
 # Handle ASG processes
 HANDLE_PROCS=false
+
+# AWS Profile to use
+AWS_PROFILE='lb-utils'
 
 #
 # Performs CLI command and provides expotential backoff with Jitter between any failed CLI commands
@@ -105,7 +109,7 @@ get_instance_region() {
     echo $AWS_REGION
 }
 
-AWS_CLI="exec_with_fulljitter_retry aws --region $(get_instance_region)"
+AWS_CLI="exec_with_fulljitter_retry aws --region $(get_instance_region) --profile ${AWS_PROFILE}"
 # Usage: set_flag <flag> <value>
 #
 #   Writes <flag>=<value> to FLAGFILE
@@ -342,7 +346,7 @@ autoscaling_enter_standby() {
 #   successful.
 autoscaling_exit_standby() {
     local instance_id=$1
-    local asg_name=${2} 
+    local asg_name=${2}
 
     msg "Checking if this instance has already been moved out of Standby state"
     local instance_state=$(get_instance_state_asg $instance_id)
@@ -591,6 +595,38 @@ validate_elb() {
     return 0
 }
 
+
+# Usage: genereate_elb_list_from_tags <EC2 instance ID>
+#
+#     Finds all the ELBs that this instance is/should be registered to based off tags. After execution,
+#     the variable "ELB_LIST" will contain the list of load balancers for the given instance.
+#
+#    If the given instance ID, and associated tags aren't found match to any ELBs, the function returns non-zero
+get_elb_list_from_tags() {
+    local instance_id=$1
+
+    local elb_list=""
+
+    local ec2_tags=$($AWS_CLI ec2 describe-tags --filters \"Name=resource-id,Values=$instance_id\")
+    local ec2_role=$(echo $ec2_tags | jq -r '.[] | .[] | select(.Key=="role") | .Value')
+    local ec2_env=$(echo $ec2_tags | jq -r '.[] | .[] | select(.Key=="env") | .Value')
+
+    local all_elb_list=$($AWS_CLI elb describe-load-balancers | jq -r '.[] | .[] | .LoadBalancerName')
+
+    # loop through each elb and get tags... if they both match the ec2 one, stop and go on...
+    for elb in $all_elb_list; do
+        local elb_tag_role=$($AWS_CLI --load-balancer-names=$elb elb describe-tags | jq -r '.[] | .[] | .Tags | .[] | select(.Key=="role") | .Value')
+        local elb_tag_env=$($AWS_CLI --load-balancer-names=$elb elb describe-tags | jq -r '.[] | .[] | .Tags | .[] | select(.Key=="env") | .Value')
+
+        if [ "$ec2_role" = "$elb_tag_role" ] && [ "$ec2_env" = "$elb_tag_env" ]; then
+            echo "Found LB Match: $elb"
+            ELB_LIST=$elb
+            return 0
+        fi
+    done
+    return 1
+}
+
 # Usage: get_elb_list <EC2 instance ID>
 #
 #   Finds all the ELBs that this instance is registered to. After execution, the variable
@@ -709,3 +745,4 @@ get_instance_id() {
     curl -s http://169.254.169.254/latest/meta-data/instance-id
     return $?
 }
+

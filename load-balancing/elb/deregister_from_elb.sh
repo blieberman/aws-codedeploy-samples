@@ -31,7 +31,6 @@ msg "Checking if instance $INSTANCE_ID is part of an AutoScaling group"
 asg=$(autoscaling_group_name $INSTANCE_ID)
 if [ $? == 0 -a -n "${asg}" ]; then
     msg "Found AutoScaling group for instance $INSTANCE_ID: ${asg}"
-    
     msg "Checking that installed CLI version is at least at version required for AutoScaling Standby"
     check_cli_version
     if [ $? != 0 ]; then
@@ -72,6 +71,16 @@ elif [ "${ELB_LIST}" = "_any_" ]; then
         exit 0
     fi
     set_flag "ELBs" "$ELB_LIST"
+elif [ "${ELB_LIST}" = "_dynamic_" ]; then
+    msg "Automatically finding all the ELBs that this instance should be registered to based on tags..."
+    get_elb_list_from_tags $INSTANCE_ID
+    if [ $? != 0 ]; then
+        msg "Couldn't find any, but ELB_LIST=dynamic so finishing successfully without deregistering."
+        set_flag "ELBs" ""
+        finish_msg
+        exit 0
+    fi
+    set_flag "ELBs" "$ELB_LIST"
 fi
 
 # Loop through all LBs the user set, and attempt to deregister this instance from them.
@@ -101,3 +110,4 @@ for elb in $ELB_LIST; do
 done
 
 finish_msg
+
